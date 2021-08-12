@@ -40,3 +40,18 @@ Nepetrov7 Platform repository
     - в официальном репозитории мне попался сразу же "правильный" DaemonSet, который разворачивает node-exporter на всех нодах kubernetes
     - если сделать describe мастер ноды, то мы увидем там `Taints: node-role.kubernetes.io/master:NoSchedule` что запрещает разворачивать 
     - если в `spec.tolerations` указать `operator: "Exists"`, `effect: "NoSchedule"`, то поды будут размещаться и на мастер ноды тоже
+
+# домашнее задание 4 (kubernetes-security)
+1. task01:
+    - Создать Service Account bob, дать ему роль admin в рамках всего кластера {`01_sa_bob_admin.yml`}
+    - Создать Service Account dave без доступа к кластеру (`02_sa_dave.yml`)
+1. task2:
+    - Создать Namespace prometheus (`01_ns_prometheus.yml`)
+    - Создать Service Account carol в этом Namespace (`02_sa_carol.yml`)
+    - Дать всем Service Account в Namespace prometheus возможность делать get, list, watch в отношении Pods всего кластера (`03_clusterrole_and_binding.yml`)
+1. task03:
+    - Создать Namespace dev (`01_ns_dev.yml`)
+    - Создать Service Account jane в Namespace dev (`02_sa_jane.yml`)
+    - Дать jane роль admin в рамках Namespace dev (`03_jane_admin_dev.yml`)
+    - Создать Service Account ken в Namespace dev (`04_sa_ken.yml`)
+    - Дать ken роль view в рамках Namespace dev (`05_ken_view_dev.yml`)
