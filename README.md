@@ -219,3 +219,9 @@ replicaset.apps/controller-fb659dc8   1         1         1       5m56s
         - `nginx.ingress.kubernetes.io/canary: "true"` - метка что этот ингресс является канареечным
         - `nginx.ingress.kubernetes.io/canary-weight: "20"` - тут указываем сколько процентов трафика быдет уходить на канареечные поды
         - не забываем, что без доменного имени это работать не будет.
+
+# доманшее задание 6 (kubernetes-volumes)
+- развернуть StatefulSet с minIO - локальным s3 хранилищем
+    - деплооим 2 манифеста: `https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-02/Kuberenetes-volumes/minio-statefulset.yaml` и `https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-02/Kuberenetes-volumes/minio-headless-service.yaml`
+- задание со звездочкой* переместить креды в secret и настроить конфигурацию на их пользование из секрета
+    - решение: `minio-statefulset.yaml` и `minio-creds-secret.yml`
