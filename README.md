@@ -225,3 +225,129 @@ replicaset.apps/controller-fb659dc8   1         1         1       5m56s
     - деплооим 2 манифеста: `https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-02/Kuberenetes-volumes/minio-statefulset.yaml` и `https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-02/Kuberenetes-volumes/minio-headless-service.yaml`
 - задание со звездочкой* переместить креды в secret и настроить конфигурацию на их пользование из секрета
     - решение: `minio-statefulset.yaml` и `minio-creds-secret.yml`
+
+# домашнее задание 7 (kubernetes-templating)
+1. Создаем кластер на google cloud
+1. добавляем репозиторий `google-cloud-sdk`
+    ```
+    cat /etc/yum.repos.d/google-cloud-sdk.repo
+    [google-cloud-sdk]
+    name=Google Cloud SDK
+    baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el8-x86_64
+    enabled=1
+    gpgcheck=1
+    repo_gpgcheck=0
+    gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg
+        https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+    ```
+1. ставим из него пакет: `sudo yum install -y google-cloud-sdk`
+1. настраиваем kubectl на локальной машине: `sudo gcloud container clusters get-credentials k8s --zone europe-west3-a --project infra-327408`
+1. устанавливаем helm 3
+1. добавляем репозиторий с stable чартами `helm repo add stable https://charts.helm.sh/stable`
+1. деплоим nginx-ingress `helm upgrade --install nginx-ingress stable/nginx-ingress --wait --namespace=nginx-ingress --version=1.41.3`
+1. добавляем репозиторий с cert-manager `helm repo add jetstack https://charts.jetstack.io`
+1. ставим CDR: `kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v0.16.1/cert-manager.crds.yaml`
+1. создаем ns `kubectl create ns cert-manager`
+1. ставим cert-manager `helm upgrade --install cert-manager jetstack/cert-manager --wait --namespace=cert-manager --version=0.16.1`
+1. создаем и деплоим ClusterIssuer `cert-manager/clusterissuer.yml`
+## задание со *. установить и разобраться в использовании chartmuseum
+1. создаем namespase `kubectl create ns chartmuseum`
+1. создаем `chartmuseum/values.yaml`
+1. деплоим chartmuseum в kubernetes `helm upgrade --install chartmuseum stable/chartmuseum --wait --namespace=chartmuseum --version=2.13.2 -f ./chartmuseum/values.yaml`
+1. проверяем, что chartmuseum установлен `export POD_NAME=$(kubectl get pods --namespace chartmuseum -l "app=chartmuseum" -l "release=chartmuseum" -o jsonpath="{.items[0].metadata.name}") ; kubectl port-forward $POD_NAME 8080:8080 --namespace chartmuseum` `curl http://127.0.0.1:8080/` или `https://chartmuseum.34.141.76.119.nip.io/`
+1. ставим gofish `curl -fsSL https://raw.githubusercontent.com/fishworks/gofish/main/scripts/install.sh | bash`
+1. `gofish init` `gofish install gofish` `gofish upgrade gofish`
+1. ставим chartmuseum `gofish install chartmuseum`
+1. создаем сервис аккаунт по инструкции: `https://cloud.google.com/docs/authentication/getting-started`
+1. создаем переменную среды с путем до ключа `export GOOGLE_APPLICATION_CREDENTIALS="/home/user/Downloads/[FILE_NAME].json"`
+1. Создаем google storage bucket: `https://cloud.google.com/storage/docs/creating-buckets`
+1. 
+    ```
+    chartmuseum --debug --port=8080   --storage="google"   --storage-google-bucket="infra-bucket777"   --storage-google-prefix=""
+    2021-10-13T12:37:31.651+0300    DEBUG   Fetching chart list from storage        {"repo": ""}
+    2021-10-13T12:37:31.795+0300    DEBUG   No change detected between cache and storage    {"repo": ""}
+    2021-10-13T12:37:31.795+0300    INFO    Starting ChartMuseum    {"host": "0.0.0.0", "port": 8080}
+    2021-10-13T12:37:31.795+0300    DEBUG   Starting internal event listener
+    ```
+1. ставим плагин `https://github.com/chartmuseum/helm-push`
+1. добавляем репозиторий `helm repo add chartmuseum https://chartmuseum.34.159.243.248.nip.io`
+1. скачиваем чарт для теста: `helm fetch --untar kubernetes-dashboard/kubernetes-dashboard`
+1. пушим тестовый чарт в репозиторий `helm cm-push kubernetes-dashboard/ chartmuseum`
+curl --data-binary "@kubernetes-dashboard-5.0.4.tgz" http://localhost:8080/api/charts
+
+1. обновляем индекс репозитория `helm repo update`
+1. устанавливаем с нашего репозитория дашборд `helm install kubernetes-dashboard chartmuseum/kubernetes-dashboard --namespace=kubernetes-dashboard --create-namespace`
+1. complete!
+## harbor
+1. добавляем репозиторий `helm repo add harbor https://helm.goharbor.io`
+1. скачиваем чарт `helm fetch --untar harbor/harbor --version=1.8.0`
+1. редактируем `values.yml` в соотвествии с ТЗ
+1. ТЗ:
+    - Должен быть включен ingress и настроен host harbor.<IPадрес>.nip.io
+    - Должен быть включен TLS и выписан валидный сертификат
+    - Скопируйте используемый файл values.yaml в директорию kubernetes-templating/harbor/
+1. устанавливаем herbor `helm upgrade --install harbor harbor/harbor --version=1.1.2 --namespace=harbor --create-namespace --values kubernetes-templating/harbor/values.yaml`
+
+## создаем свой helm chart
+- `helm create hipster-shop`
+- удаляем все содержимое templates и values.yml
+- и из содержимого файла `https://github.com/express42/otus-platform-snippets/blob/master/Module-04/05-Templating/manifests/all-hipster-shop.yaml` создаем чарты hipster-shop и frontend
+- добавляем `frontend` как зависимость для чарта `hipster-shop`, для этого прописываем в файл `./hipster-shop/Chart.yaml` следующие строки:
+    ```
+    dependencies:
+    - name: frontend
+        version: 0.1.0
+        repository: "file://../frontend"
+    ```
+- а затем обновляем зависимости `helm dep update kubernetes-templating/hipster-shop`
+- после этого появится файл `kubernetes-templating/hipster-shop/charts/frontend-0.1.0.tgz`
+- теперь можно деплоить чарт `hipster-shop` и автоматически задеплоится чарт `frontend`
+- меняем NodePort с помощью ключа `--set` не меняя его в values.yaml `helm upgrade --install hipster-shop kubernetes-templating/hipster-shop --namespace=hipster-shop --set frontend.service.NodePort=31234`
+## задение со * добавить в зависимости redis, чтобы он деплоился вместе с релизом hipster-shop
+- добавляем репозиторий bitnami `helm repo add bitnami https://charts.bitnami.com/bitnami`
+- добавляем в `Chart.yml` в раздел `dependencies` строки:
+    ```
+    - name: redis
+        version: latest
+        repository: https://charts.bitnami.com/bitnami
+    ```
+## Научиться работать с helm-secrets | Необязательное задание.
+- ставим зависимости: `yum install sops gnupg2 gnu-getopt`
+- ставим плагин `helm plugin install https://github.com/futuresimple/helm-secrets`
+- гененируем gnupg key `gpg --full-generate-key`
+- проверяем наличие ключа `gpg -k`
+- создаем файл `kubernetes-tamplating/frontend/secret.yaml` и помещаем в него `visibleKey: hiddenValue`
+- шифруем файл secret.yaml `sops -e -i --pgp <$ID> secrets.yaml` указывая id своего ключа
+- проверяемм содержимое файла, и видим ключ и его зашифрованное значение. в таком виде серкрет можно коммитить в гит
+- расшифровывать можно любой из команд: `helm secrets view secrets.yaml` или `sops -d secrets.yaml`
+- чтобы поместить значение этого секрета в kubernetes:
+    - создаем файл `kubernetestemplating/frontend/templates/secret.yaml` с содержимым:
+    ```
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret
+type: Opaque
+data:
+  visibleKey: {{ .Values.visibleKey | b64enc | quote }}
+    ```
+    - при деплое передаем файл `secrets.yaml` как файл `values`, плагин `helm-secrets` расшифрует его, сложит значение во временный файл `secrets.yaml.dec` значение перменной вставит в шаблон секрета, а после деплоя удалит его.
+    - деплоим: `helm secrets upgrade --install hipster-shop kubernetes-templating/frontend --namespace hipster-shop -f kubernetes-templating/frontend/values.yaml -f kubernetes-templating/frontend/secrets.yaml`
+- залить чарты в публичный harbor
+    - `helm package  kubernetes-templating/hipster-shop/`, полученные архив загружаем в harbor
+    - добавляем файл kubernetes-templating/repo.sh для добавления преподавателем публичного репозитория себе.
+
+## kubecfg
+- выносим service и deployment от сервисов paymentservice и shippingservice в папку `kubernetes-templating/kubecfg`
+- деплоим снова наш чарт и видим, что при добавлении в козину товаров - сайт выдает ошибку
+- устанавливаем kubecfg
+- Kubecfg предполагает хранение манифестов в файлах формата .jsonnet. возьмем такой файл с официального репозитория: `https://github.com/bitnami/kubecfg/blob/master/examples/guestbook.jsonnet`
+- Для начала в файле мы должны указать libsonnet библиотеку, которую будем использовать для генерации манифестов. `https://github.com/bitnami-labs/kube-libsonnet/`
+- получился файл `kubernetes-templating/kubecfg/services.jsonnet`
+- деплоим `kubecfg update kubernetes-templating/kubecfg/services.jsonnet --namespace hipster-shop`
+
+## Kustomize
+- выносим еще один сервис в отдельную директорию `kubernetes-templating/kustomize/cartservice` и разносим по разным файлам.
+- пишем файл `kubernetes-templating/kustomize/cartservice/kustomization.yaml`
+- по тз нужно, чтобы деплой сервиса происходил по команде `kubectl apply -k kubernetes-templating/kustomize/overrides/<Название окружения>/` в разные нейспейсы с разными тегами и префиксом в названии. для этого создаем файлы в директории `kubernetes-templating/kustomize/overrides/*/kustomization.yaml`, в которых ссылаемся на файл, описанный в предыдущем пункте.
+

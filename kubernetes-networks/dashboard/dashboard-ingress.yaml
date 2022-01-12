@@ -10,9 +10,10 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS" 
 spec:
   rules:
-  - http:
+  - host: dashboard.site
+    http:
       paths:
-      - path: /dashboard/(.*)
-        backend:
+      - backend:
           serviceName: kubernetes-dashboard
           servicePort: 443
+        path: /
