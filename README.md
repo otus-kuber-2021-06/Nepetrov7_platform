@@ -351,3 +351,67 @@ data:
 - пишем файл `kubernetes-templating/kustomize/cartservice/kustomization.yaml`
 - по тз нужно, чтобы деплой сервиса происходил по команде `kubectl apply -k kubernetes-templating/kustomize/overrides/<Название окружения>/` в разные нейспейсы с разными тегами и префиксом в названии. для этого создаем файлы в директории `kubernetes-templating/kustomize/overrides/*/kustomization.yaml`, в которых ссылаемся на файл, описанный в предыдущем пункте.
 
+# домашнее задание 8 (kubernetes-operator)
+- определяем customResource CustomResourceDefinition-ом 
+- создаем описание кастом ресурса kubernetes-operators/deploy/crd.yml и сам ресурс kubernetes-operators/deploy/cr.yml
+- определяем `openAPIV3Schema` для того чтобы был фиксированный тип значений всех полей у кастом ресурса
+- прописываем обязательные ключи, чтобы без их определения задеплоить ресур нельзя было, поле `required`
+
+1. написание контроллера для обработки двух типов событий следующими действиями:
+    - При создании объекта типа `kind: mySQL`, он будет:
+        - Cоздавать PersistentVolume, PersistentVolumeClaim, Deployment, Service для mysql
+        - Создавать PersistentVolume, PersistentVolumeClaim для бэкапов базы данных, если их еще нет.
+        - Пытаться восстановиться из бэкапа
+    - При удалении объекта типа `kind: mySQL`, он будет:
+        - Удалять все успешно завершенные backup-job и restore-job
+        - Удалять PersistentVolume, PersistentVolumeClaim, Deployment, Service для mysql
+1. выполнение:
+    - для этого создаем темплейты всех этих сущностей в `kubernetes-operators/build/templates/*`
+    - описываем python приложение в `kubernetes-operators/build/mysql-operator.py`
+    - не забываем передать в backup pvc все параметры, в том числе и `storage_size`
+    - пишем dockerfile и заливаем его на `hub.docker.com`
+    ```
+[user@localhost deploy]$ k get pvc
+NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+backup-mysql-instance-pvc   Bound    pvc-a475fd09-d3ca-406a-8ae0-bc9bed15bf8d   1Gi        RWO            standard       6s
+mysql-instance-pvc          Bound    pvc-9691af6c-daad-4fff-81da-cc96a6353a63   1Gi        RWO            standard       6s
+    ```
+    - выполняем проверку
+        - `kubectl exec -it $MYSQLPOD -- mysql -u root -potuspassword -e "CREATE TABLE test ( id smallint unsigned not null auto_increment, name varchar(20) not null, constraint pk_example primary key (id) );" otus-database`
+        - `kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "INSERT INTO test ( id, name ) VALUES (null, 'some data' );" otus-database`
+        - `kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "INSERT INTO test ( id, name ) VALUES (null, 'some data-2' );" otus-database`
+        - `kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database`
+        ```
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+        ```
+        - `kubectl delete mysqls.otus.homework mysql-instance` - удаляем
+        - `export MYSQLPOD=$(kubectl get pods -l app=mysql-instance -o jsonpath="{.items[*].metadata.name}")`
+        - `kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database`
+        ```
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+        ```
+```
+[user@localhost deploy]$ export MYSQLPOD=$(kubectl get pods -l app=mysql-instance -o jsonpath="{.items[*].metadata.name}")
+bectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database[user@localhost deploy]$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+[user@localhost deploy]$ kubectl get jobs
+NAME                         COMPLETIONS   DURATION   AGE
+backup-mysql-instance-job    1/1           3s         4m48s
+restore-mysql-instance-job   1/1           48s        4m16s
+```
