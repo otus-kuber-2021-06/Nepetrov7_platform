@@ -415,3 +415,17 @@ NAME                         COMPLETIONS   DURATION   AGE
 backup-mysql-instance-job    1/1           3s         4m48s
 restore-mysql-instance-job   1/1           48s        4m16s
 ```
+
+# kubernetes-monitoring
+### задание: создать кастомный образ nginx, рядом развернуть nginx-exporter для сбора и преобразования метрик для prometheus.
+- в оф доке берем параметр для конфига nginx: `https://nginx.org/ru/docs/http/ngx_http_stub_status_module.html`
+- этот параметр указывает путь по которому будут доступны метрики сервера
+- билдим и заливаем образ на dockerhub
+- получается 2 файла в директории `kubernetes-monitoring/build`
+- далее пишем `kubernetes-monitoring/deploy/deployment.yaml`
+- указываем в поде 2 контейнера, в контейнер nginx-prometheus-exporter передаем перменную окружения `SCRAPE_URI` непосредственно с url откуда метрики собирать.
+- пишем сервис для подов `service.yaml`
+- деплоим prometheus `helm upgrade --install prometheus prometheus-community/kube-prometheus-stack`
+- деплоим ServiceMonitor `kubernetes-monitoring/deploy/servicemonitor.yaml`
+- `kubectl port-forward prometheus-operator-grafana-5454fd5fbf-hc4l8 3000`переходим на https://localhost:3000 и настраиваем дашборд с source `http://prometheus-operator-prometheus:9090`
+- экспортированный json файл сохранил в `kubernetes-monitoring/grafana/dashboard.json` в этой же директории скриншот.
