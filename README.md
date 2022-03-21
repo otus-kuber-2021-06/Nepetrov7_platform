@@ -429,3 +429,116 @@ restore-mysql-instance-job   1/1           48s        4m16s
 - деплоим ServiceMonitor `kubernetes-monitoring/deploy/servicemonitor.yaml`
 - `kubectl port-forward prometheus-operator-grafana-5454fd5fbf-hc4l8 3000`переходим на https://localhost:3000 и настраиваем дашборд с source `http://prometheus-operator-prometheus:9090`
 - экспортированный json файл сохранил в `kubernetes-monitoring/grafana/dashboard.json` в этой же директории скриншот.
+
+# kubernetes-logging
+- разворачиваем новый кластер в google-cloud
+    - default-pool - c одной нодой
+    - infra-pool - с тремя нодами
+    - навешиваем taint на default-pool `node-role=infra:NoSchedule`
+- деплоим hipster-shop:
+    - `kubectl create ns microservices-demo`
+    - `kubectl apply -f https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-02/Logging/microservices-demo-without-resources.yaml -n microservices-demo`
+- проверяем что все поды поднялись на ноде default-pool `k -n microservices-demo get po -o wide`
+    - видим что не поднялся pod adservice:v0.1.3 (нет такого образа)
+    - смотрим по ссылке, поднимаем версию до v.0.3.4
+    - пробрасываем порт до пода с frontend и проверяем что он работает как положено.
+- ставим ElasticSearch, Fluent Bit, Kibana без какой-либо преднастройки
+    - `helm repo add elastic https://helm.elastic.co`
+    - `kubectl create ns observability`
+    - `helm upgrade --install elasticsearch elastic/elasticsearch --namespace observability`
+    - `helm upgrade --install kibana elastic/kibana --namespace observability`
+    - `helm upgrade --install fluent-bit stable/fluent-bit --namespace observability`
+    - обнаруживаем что все сервисы пытаются запуститься на ноде из default-pool
+    - пишем values для elasticserch `kubernetes-logging/elasticsearch.values.yaml`
+        - происываем туда toleration на наш taint `node-role=infra:NoSchedule` и прописываем `nodeSelector` чтобы он запускался только на нодах пула infra (можно использовать `nodeAffinity` для более гибкой настройки)
+    - переустанавливаем с новыми values `helm upgrade --install elasticsearch elastic/elasticsearch --namespace observability -f kubernetes-logging/elasticsearch.values.yaml`
+- деплоим nginx ingress
+    - `helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx`
+    - `helm upgrade --install nginx-ingress ingress-nginx/ingress-nginx --create-namespace --namespace nginx-ingress --values kubernetes-logging/nginx-ingress.values.yaml`
+- делаем доступ для kibana через ingress
+    - `helm -n observability upgrade --install kibana elastic/kibana -f kubernetes-logging/kibana.values.yaml`
+- удостоверяемся что все работает:
+    - проверяем логи fluent-bit: `k -n observability logs fluent-bit-nc8xn --tail 3`
+'''
+    [2022/02/24 09:13:02] [ warn] net_tcp_fd_connect: getaddrinfo(host='fluentd'): Name or service not known
+    [2022/02/24 09:13:02] [error] [out_fw] no upstream connections available
+'''
+    - деплоим c указанием имени сервиса elasticsearch-master `helm upgrade --install fluent-bit stable/fluent-bit --namespace observability --values kubernetes-logging/fluent-bit.values.yaml`
+    - удостоверяемся в том что ошибок в логах нет
+    - смотрим что в ElasticSearch появились индексы
+    - удостоверяемся что в логахз fuentbit тоже нет ошибок
+- устанавливаем prometheus-exporter
+    - `helm upgrade --install prometheus-operator  prometheus-community/prometheus-operator --namespace=observability --values kubernetes-logging/prometheus.values.yaml`
+    - `helm upgrade --install elasticsearch-exporter stable/elasticsearch-exporter --set es.uri=http://elasticsearch-master:9200 --set serviceMonitor.enabled=true --namespace=observability`
+- настройки grafana
+    - входим в графану через `k -n observability port-forward prometheus-operator-grafana-6b9b46b6c-fdtsp 3000` или по url `grafana.34.121.149.124.nip.io`
+    - логин выполняем по паролю `k -n observability get secrets prometheus-operator-grafana -o jsonpath={.data.admin-password} | base64 --decode`
+    - импортируем дашборд `https://grafana.com/grafana/dashboards/4358`
+- тестируем механизм:
+    - делаем drain node `k drain gke-cluster-2-infra-pool-96e38e8c-6j78 --ignore-daemonsets`
+    - проверяем и видим что в дашборде отобразилось 2 нодыи при это кластер остался полностью работоспособен
+    - пробуем задрейнить еще одну ноду `k drain gke-cluster-2-infra-pool-96e38e8c-ktb0 --ignore-daemonsets --delete-emptydir-data`
+    - видим сообщение об ошибке `error when evicting pods/"elasticsearch-master-2" -n "observability" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.`
+    - `operator-prometheus-0 и elasticsearch-master-1` в статусе `Pending`
+    - kibana потеряла подключение к кластеру
+    - Метрики Prometheus перестали собираться, так как у сервиса, к которому подключается exporter, пропали все endpoint
+- приходим к выводу, что чтобы не потерять мониторинг кластера - нужно знать о выходе из строя нод (желательно на этапе выхода из  строя первой ноды)
+    - для решения подобных проблем можно добавить алерт `ElasticsearchTooFewNodesRunning` из источника: `https://github.com/prometheus-community/elasticsearch_exporter/blob/master/examples/prometheus/elasticsearch.rules`
+
+```
+ALERT ElasticsearchTooFewNodesRunning
+  IF elasticsearch_cluster_health_number_of_nodes < 3
+  FOR 5m
+  LABELS {severity="critical"}
+  ANNOTATIONS {description="There are only {{$value}} < 3 ElasticSearch nodes running", summary="ElasticSearch running on less than 3 nodes"}
+```
+
+- делаем uncordon нод
+- следует обратить внимание на метрики
+    - `unassigned_shards` - количество shard, для которых не нашлось подходящей ноды, их наличие сигнализирует о проблемах
+    - `jvm_memory_usage` - высокая загрузка (в процентах от выделенной памяти) может привести к замедлению работы кластера
+    - `number_of_pending_tasks` - количество задач, ожидающих выполнения. Значение метрики, отличное от нуля, может сигнализировать о наличии проблем внутри кластера
+    - хорошая статья о метриках: `https://habr.com/ru/company/yoomoney/blog/358550/`
+- решаем проблему с логами nginx-ingress
+    - докидываем парсер для fluent-bitи снова деплоим его в кластер
+- решаем сложность анализа логов nginx-ingress в kibana.
+    - исходя из документации `https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/#log-format-escape-json` и `https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/#log-format-upstream` докидываем конфиг в values:
+
+```
+
+  config:
+    name: nginx-config
+
+    log-format-escape-json: "true"
+    log-format-upstream: '{"remote_addr": "$proxy_protocol_addr", "x-forward-for": "$proxy_add_x_forwarded_for", "request_id": "$req_id", "remote_user": "$remote_user", "bytes_sent": $bytes_sent, "request_time": $request_time, "status":$status, "vhost": "$host", "request_proto": "$server_protocol", "path": "$uri", "request_query": "$args", "request_length": $request_length, "duration": $request_time,"method": "$request_method", "http_referrer": "$http_referer", "http_user_agent": "$http_user_agent" }'
+```
+    - деплоим еще раз хелмом. поды не требуют рестарта, так как nginx-ingress-controller сам перечитывает конфиги благодаря аргументу, указанному в команде запуска контейнера: `--configmap=$(POD_NAMESPACE)/nginx-ingress-ingress-nginx-controller`
+- создаем новую визуализацию с типом TSVB
+    - настроим ее для отображения количества запросов к nginx-ingress, выставив фильтр `kubernetes.labels.app_kubernetes_io/instance: nginx-ingress`
+    - сделаем дашборд для отображения запросов к nginx-ingress со статусами:
+        - 200-299
+        - 300-399
+        - 400-499
+        - 500+
+    - выгрузил в `kubernetes-logging/export.ndjson`
+- деплоим loki
+    - удаляем все с ns
+    - `helm repo add grafana https://grafana.github.io/helm-charts`
+    - `helm repo update`
+    - докидываем в values prometheus `additionalDataSources`
+    - деплоим loki
+    - `helm upgrade --install loki grafana/loki-stack -n observability --create-namespace  --values values.loki.yaml`
+    - смотрим логи nginx ingress с source Loki,через `Explore`
+        - `{app_kubernetes_io_name="ingress-nginx"}`
+    - создаем дашборд, в котором одновременно выведем метрики ingress-nginx и его логи
+        - убеждаемся что вместе с ingress-nginx устанавливается serviceMonitor и prometheus его видит
+        - добавляем дашборд и закидываем в него переменные из официального источника `https://github.com/kubernetes/ingress-nginx/blob/master/deploy/grafana/dashboards/nginx.json`
+        - сосдаем новую панель и добавляем query для ingress-nginx
+
+```
+sum(rate(nginx_ingress_controller_requests{controller_pod=~"$controller",controller_class=~"$controller_class",namespace=~"$namespace",ingress=~"$ingress",status!~"[4-5].*"}[1m])) by (ingress) / sum(rate(nginx_ingress_controller_requests{controller_pod=~"$controller",controller_class=~"$controller_class",namespace=~"$namespace",ingress=~"$ingress"}[1m])) by(ingress)
+```
+
+        - аналогичным образом добавляем панель с количеством запросов к ingress-nginx в секунду
+        - добаляем панель с логами
+        - выгружаем в `ingress-nginx.json`
